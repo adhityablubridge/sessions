@@ -1,0 +1,1 @@
+2026-08-19 - Portable Claude session sync (pull/push, box-agnostic project-dir naming, gz store, prune, size guard) + separate logs branch setup - CP / .claude/scripts/{lib-sessions,pull,push,logs-pull,logs-push}.sh, sessions.conf, .gitignore, README.md
