@@ -1,0 +1,5 @@
+# Session stores are already-compressed blobs: never try to diff or merge them.
+*.jsonl.gz binary
+*.jsonl    -text
+# Append-only markdown (the work log) unions instead of conflicting.
+*.md       merge=union

@@ -1,0 +1,53 @@
+# Ignore everything by default, then whitelist what we sync across machines.
+*
+
+# Allow the whitelist mechanism itself
+!.gitignore
+!README.md
+!sessions.conf
+!SOP.md
+!.gitattributes
+
+# Tracked directories
+!projects/
+!rules/
+!scripts/
+
+# Recurse into them and take everything inside
+!projects/**
+!rules/**
+!scripts/**
+
+# --- hard exclusions (win over the whitelist above) -------------------------
+
+# Per-box overrides never travel (they hold machine-specific paths)
+sessions.local.conf
+**/sessions.local.conf
+
+# Never track credentials or machine-local state, even if nested
+.credentials.json
+**/.credentials.json
+shell-snapshots/
+session-env/
+ide/
+backups/
+file-history/
+.last-cleanup
+policy-limits.json
+remote-settings.json
+
+# Never track a nested git repo or a stray backup of one. This is what produced
+# the 604MB projects/.git-inner-backup - a git repo committed INTO a git repo.
+**/.git/
+**/.git-inner-backup/
+**/*.git-backup/
+
+# Box-specific live project dirs are SYMLINKS created by pull.sh at runtime
+# (projects/-root-BluTrain, projects/-home-... etc). Only the canonical
+# projects/<CANON>/ store belongs in the repo.
+projects/-*
+
+# Raw session logs are never committed in compress mode; only the .gz store is.
+# (Drop this line if you switch MODE=link.)
+projects/**/*.jsonl
+!projects/**/*.jsonl.gz
