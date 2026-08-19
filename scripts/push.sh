@@ -88,7 +88,10 @@ if [ "${KEEP:-0}" -gt 0 ]; then
       u=$(basename "$f"); u=${u%.gz}; u=${u%.jsonl}
       case " ${KEEP_SESSIONS:-} " in *" $u "*) info "keeping pinned $u"; continue ;; esac
       info "pruning old session $u"
+      # Remove the sidecar dir too - otherwise <uuid>/subagents/ survives every
+      # prune and the store slowly refills with transcripts for dead sessions.
       run "rm -f '$f'"
+      run "rm -rf '$STORE/$u'"
     done
   fi
 fi
