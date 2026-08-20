@@ -70,11 +70,26 @@ if [ -e "$TARGET" ] && [ ! -L "$TARGET" ]; then
   fi
   if [ "$DO_ADOPT" = 1 ] && [ "$n" -gt 0 ]; then
     info "adopting $n existing session(s) into the store"
+    # Adopt is the mirror of step 4 and needs the same content test. Writing
+    # live -> store unconditionally (as this did) clobbers a stored copy that is
+    # AHEAD of the live one - e.g. a session continued on another box and pushed
+    # from there, which is precisely the case adopt runs into on a second box.
     for f in "$TARGET"/*.jsonl; do
       [ -e "$f" ] || continue
       b=$(basename "$f")
-      if [ "$MODE" = compress ]; then run "gzip -9 -c '$f' > '$STORE/$b.gz'"
-      else                             run "cp -n '$f' '$STORE/$b'"; fi
+      if [ "$MODE" = compress ]; then
+        if [ -f "$STORE/$b.gz" ]; then
+          case "$(classify_session "$STORE/$b.gz" "$f")" in
+            take) info "  store is ahead, not adopting: $b"; continue ;;
+            fork) warn "  DIVERGED, store kept, NOT adopting: $b"
+                  warn "    resolve by hand: zcat '$STORE/$b.gz' | wc -l; wc -l '$f'"
+                  continue ;;
+          esac
+        fi
+        run "gzip -9 -c '$f' > '$STORE/$b.gz'"
+      else
+        run "cp -n '$f' '$STORE/$b'"
+      fi
     done
     [ "$DRY" = 1 ] || sync_sidecars "$TARGET" "$STORE" "adopting"
   fi
@@ -89,20 +104,33 @@ if [ "$MODE" = link ]; then
   run "ln -s '$STORE' '$TARGET'"
   ok "linked $TARGET -> $STORE"
 else
-  # Compressed store: decompress into the live dir. Never overwrite a live file
-  # that is NEWER than the stored copy (that would destroy unpushed work).
+  # Compressed store: decompress into the live dir. A stored copy may overwrite
+  # the live one ONLY when it is a strict continuation of it - decided by
+  # content, not mtime (see classify_session in lib-sessions.sh for why mtime
+  # cannot work here).
   run "mkdir -p '$TARGET'"
-  cnt=0
+  cnt=0; kept=0; forked=0
   for f in "$STORE"/*.jsonl.gz; do
     [ -e "$f" ] || continue
     b=$(basename "$f" .gz); dst="$TARGET/$b"
-    if [ -f "$dst" ] && [ "$dst" -nt "$f" ]; then
-      warn "keeping NEWER live copy, not overwriting: $b (push it before pulling)"
-      continue
-    fi
-    run "gzip -dc '$f' > '$dst'"; cnt=$((cnt+1))
+    case "$(classify_session "$f" "$dst")" in
+      keep)
+        kept=$((kept+1)) ;;                       # live is equal or ahead
+      fork)
+        # Both sides have lines the other lacks. Either could be the one you
+        # want, so refuse to choose: keep live untouched and park the store
+        # copy beside it for inspection.
+        forked=$((forked+1))
+        warn "DIVERGED, live kept: $b"
+        warn "  store copy saved as $b.store - compare, then keep one:"
+        warn "    wc -l '$dst' '$dst.store'"
+        run "gzip -dc '$f' > '$dst.store'" ;;
+      take)
+        run "gzip -dc '$f' > '$dst'"; cnt=$((cnt+1)) ;;
+    esac
   done
-  ok "restored $cnt session(s) into $TARGET"
+  ok "restored $cnt session(s) into $TARGET ($kept already current, $forked diverged)"
+  [ "$forked" -eq 0 ] || warn "$forked session(s) DIVERGED - resolve the .store files above"
   [ "$DRY" = 1 ] || sync_sidecars "$STORE" "$TARGET" "restoring"
 fi
 

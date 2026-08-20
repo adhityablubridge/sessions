@@ -106,6 +106,18 @@ else
     if [ "${prev[$b]:-}" = "$sz" ] && [ -f "$STORE/$b.gz" ]; then
       skipped=$((skipped+1)); continue
     fi
+    # Never let a shorter live copy overwrite a stored one that is ahead. Normal
+    # pushes have live ahead of store, so this only trips after a --force
+    # takeover where this box never pulled the other box's continuation.
+    if [ -f "$STORE/$b.gz" ]; then
+      case "$(classify_session "$STORE/$b.gz" "$f")" in
+        take) warn "store is AHEAD of live, not overwriting: $b (pull first)"
+              skipped=$((skipped+1)); continue ;;
+        fork) warn "DIVERGED, store kept, not overwriting: $b"
+              warn "  compare: zcat '$STORE/$b.gz' | wc -l ; wc -l '$f'"
+              skipped=$((skipped+1)); continue ;;
+      esac
+    fi
     info "compressing $b ($(human "$sz"))"
     run "gzip -9 -c '$f' > '$STORE/$b.gz'"
     changed=$((changed+1))

@@ -118,6 +118,47 @@ except Exception: print("")' 2>/dev/null || true)
   done
 }
 
+# --- decide whether a stored session may overwrite the live one ---------------
+# Sessions are APPEND-ONLY JSONL, which is what makes this decidable: if one
+# copy is a line-exact prefix of the other, the longer one is strictly the more
+# complete and can be taken without losing anything.
+#
+# Why not mtime (the previous `[ "$dst" -nt "$f" ]` test): a fresh `git clone`
+# stamps every store file with the CHECKOUT time, so the store always looks
+# newer than a live session written days ago and the guard never fires. That is
+# the same trap merge_log already documents for the log file - it just was not
+# applied to sessions.
+#
+# Echoes one of: take | keep | fork   (and never exits non-zero)
+classify_session() {
+  local gz="$1" live="$2"
+  [ -f "$live" ] || { echo take; return 0; }          # nothing local to lose
+  local nl ns
+  nl=$(wc -l < "$live" 2>/dev/null || echo 0)
+  ns=$(zcat "$gz" 2>/dev/null | wc -l || echo 0)
+  if [ "$ns" -eq "$nl" ]; then
+    # Same length: identical content is a no-op, differing content is a fork.
+    if [ "$(md5sum < "$live" | cut -d' ' -f1)" = \
+         "$(zcat "$gz" 2>/dev/null | md5sum | cut -d' ' -f1)" ]
+    then echo keep; else echo fork; fi
+    return 0
+  fi
+  local shorter longer n
+  if [ "$ns" -gt "$nl" ]; then shorter=live; n=$nl; else shorter=store; n=$ns; fi
+  # Is the shorter one a line-exact prefix of the longer one?
+  local h_short h_long
+  if [ "$shorter" = live ]; then
+    h_short=$(md5sum < "$live" | cut -d' ' -f1)
+    h_long=$(zcat "$gz" 2>/dev/null | head -n "$n" | md5sum | cut -d' ' -f1)
+  else
+    h_short=$(zcat "$gz" 2>/dev/null | md5sum | cut -d' ' -f1)
+    h_long=$(head -n "$n" "$live" | md5sum | cut -d' ' -f1)
+  fi
+  if [ "$h_short" != "$h_long" ]; then echo fork; return 0; fi
+  # True continuation: take the store copy only when IT is the longer one.
+  if [ "$ns" -gt "$nl" ]; then echo take; else echo keep; fi
+}
+
 # Record who last held the store, so two boxes can't silently diverge.
 write_owner() {
   printf 'host=%s\nuser=%s\nlaunch_dir=%s\nstamp=%s\n' \

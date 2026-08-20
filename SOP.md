@@ -121,6 +121,30 @@ finished, then `--force` to take the store.
 
 ---
 
+## Conflict handling
+
+Sessions are append-only JSONL, so `classify_session` decides every live-vs-store
+pair by CONTENT, never by mtime (a fresh clone stamps the whole store with the
+checkout time, which silently defeated the old `-nt` test in both directions):
+
+| verdict | meaning | action |
+|---|---|---|
+| `take` | store is a strict continuation of live | overwrite live |
+| `keep` | live is equal to, or ahead of, store | leave live alone |
+| `fork` | each side has lines the other lacks | **refuse**, keep both |
+
+On `fork`, `pull.sh` writes the store copy beside the live one as
+`<uuid>.jsonl.store` and leaves the live file untouched. Compare and keep one:
+
+```bash
+wc -l <uuid>.jsonl <uuid>.jsonl.store
+```
+
+`push.sh` and `pull.sh --adopt` apply the same test in the other direction and
+refuse to overwrite a store copy that is ahead of, or diverged from, live.
+A fork means two boxes wrote the same session concurrently - the owner lock
+exists to stop that happening in the first place.
+
 ## The one rule that breaks everything
 
 **The launch dir must match between pull and resume.** Sessions are keyed to the
