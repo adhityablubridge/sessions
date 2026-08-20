@@ -7,7 +7,9 @@
 #
 #   ./scripts/push.sh -m "stage 3 hopper fork"
 #   ./scripts/push.sh --keep 4          # prune store to 4 newest sessions
-#   ./scripts/push.sh --squash          # collapse history (keeps repo small)
+#   ./scripts/push.sh --force           # take over a store owned by another box,
+#                                       #   or snapshot while claude is running
+#   ./scripts/push.sh --squash          # collapse history - DESTRUCTIVE, see SOP
 #   ./scripts/push.sh --dry-run
 # ---------------------------------------------------------------------------
 set -euo pipefail
@@ -15,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib-sessions.sh"
 sess_init "$SCRIPT_DIR"
 
-LAUNCH_DIR="$PWD"; MSG=""; DO_SQUASH=0; DRY=0
+LAUNCH_DIR="$PWD"; MSG=""; DO_SQUASH=0; DRY=0; FORCE=0
 SCRATCH="_sync_tmp"; SQUASH_BRANCH=""
 # Everything the squash must carry. A --squash rebuilds the branch from this
 # list alone, so anything omitted here is DELETED from the remote.
@@ -27,6 +29,7 @@ while [ $# -gt 0 ]; do
     --keep)    KEEP="$2"; shift 2 ;;
     --squash)  DO_SQUASH=1; shift ;;
     --branch)  SQUASH_BRANCH="$2"; shift 2 ;;
+    --force)   FORCE=1; shift ;;
     --dry-run) DRY=1; shift ;;
     -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *)         die "unknown flag: $1" ;;
@@ -40,10 +43,43 @@ TARGET="$(live_project_dir "$LAUNCH_DIR")"
 info "live : $TARGET"
 info "store: $STORE (mode=$MODE)"
 
-# --- 0. refuse to snapshot a session that is being written right now ----------
+# --- 0a. ownership lock -------------------------------------------------------
+# read_owner is advisory in pull.sh (a warn), which is not enough: two boxes
+# each pushing a --squash means the second SILENTLY force-overwrites the first,
+# and the loser's commit is unrecoverable after the gc the SOP prescribes.
+# Pushing is the destructive direction, so the check belongs here and it hard-
+# fails. Taking the store over is legitimate - it just has to be deliberate.
+OWNER_HOST=$(read_owner | sed -n 's/^host=//p')
+if [ -n "${OWNER_HOST:-}" ] && [ "$OWNER_HOST" != "$(hostname)" ]; then
+  if [ "$FORCE" = 1 ]; then
+    warn "taking over the store from '$OWNER_HOST' (--force)"
+  else
+    die "the store is currently owned by '$OWNER_HOST', not $(hostname).
+
+  Pushing now would overwrite whatever that box has not yet pulled.
+  Confirm '$OWNER_HOST' is finished writing, then re-run with --force:
+    $0 --dir '$LAUNCH_DIR' --force -m '<msg>'
+
+  Current owner record:
+$(read_owner | sed 's/^/    /')"
+  fi
+fi
+
+# --- 0b. refuse to snapshot a session that is being written right now ----------
 if command -v fuser >/dev/null 2>&1; then
   busy=$(fuser "$TARGET"/*.jsonl 2>/dev/null | tr -s ' ' || true)
-  [ -z "$busy" ] || warn "a session file is OPEN (claude still running?) - snapshot may be mid-write"
+  if [ -n "$busy" ]; then
+    # A mid-write snapshot silently truncates the tail - i.e. loses exactly the
+    # work you are pushing in order to preserve. Only --force may proceed.
+    if [ "$FORCE" = 1 ]; then
+      warn "a session file is OPEN (claude still running?) - snapshot may be mid-write (--force)"
+    else
+      die "a session file is OPEN (claude still running?) - pid(s):$busy
+
+  Close Claude first; a mid-write snapshot loses the tail of the session.
+  To snapshot anyway: re-run with --force"
+    fi
+  fi
 fi
 
 mkdir -p "$STORE"

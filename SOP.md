@@ -6,7 +6,19 @@ per new box, then a short daily routine. Commands assume the sessions repo is at
 
 ---
 
-## Phase 0 - ONE TIME, on this box (the one holding the scripts)
+## Phase 0 - ALREADY DONE. DO NOT RUN AGAIN.
+
+> Executed 2026-08-19 on `plain-machine-roars-fin-02`. Kept below for the record
+> only. Running it on any other box **destroys that box's live sessions**:
+> `rm -rf projects/-home-blu-bridge25-CP` is "stale" only on the box that
+> authored this SOP; on the laptop it is the real, live CP session dir.
+>
+> `--squash` is likewise spent. It force-pushes an orphan commit, and on
+> 2026-08-19 it silently discarded a commit another box had just pushed. With
+> `KEEP` pruning active, squashing is what turns a prune into permanent loss.
+> Every box after the first is a **Phase 1** box.
+
+<details><summary>historical Phase 0 (do not run)</summary>
 
 Run in order. Steps 1-2 are local cleanup, 3 publishes, 4 creates the logs branch.
 
@@ -35,6 +47,8 @@ scripts/logs-push.sh -m "init logs branch"
 
 Verify: `scripts/pull.sh --list` shows 6 sessions, `du -sh .git` is tens of MB
 not hundreds, and the `logs` branch exists on GitHub.
+
+</details>
 
 ---
 
@@ -71,7 +85,7 @@ claude --resume <UUID>                   # or: claude --resume
 ### Before destroying the box - MANDATORY
 
 ```bash
-# close Claude first: an open session file snapshots mid-write
+# close Claude first: push.sh now REFUSES an open transcript (--force overrides)
 cd ~/.claude-sessions
 scripts/logs-push.sh -m "session log"
 scripts/push.sh --dir /root/BluTrain -m "what you did"
@@ -79,6 +93,31 @@ scripts/push.sh --dir /root/BluTrain -m "what you did"
 
 Nothing else preserves the work. `push.sh` is required in **both** sync modes -
 data does not leave the machine by itself.
+
+**Automate it.** Relying on memory here loses everything the one time you forget,
+so wire a `SessionEnd` hook in that box's `~/.claude/settings.json`:
+
+```json
+{ "hooks": { "SessionEnd": [ { "matcher": "*", "hooks": [
+  { "type": "command",
+    "command": "$HOME/.claude-sessions/scripts/autopush.sh --dir <LAUNCH_DIR>",
+    "timeout": 300 } ] } ] } }
+```
+
+`autopush.sh` is the unattended wrapper: it waits for the transcript handle to
+close (SessionEnd fires while Claude is still exiting), skips silently if
+another box owns the store, skips if no `GH_TOKEN`/`SESSIONS_SSH_KEY` is
+configured, and never fails a shutdown. It logs to
+`~/.claude-sessions/.autopush.log` - **check that file** if a session ever
+appears to have gone missing. It is a safety net, not a licence to skip the
+manual push before teardown.
+
+### Ownership
+
+`push.sh` hard-fails when `.owner` names a different host. That is deliberate:
+before this, ownership was advisory (a `warn` in `pull.sh` only) and two boxes
+pushing meant the second silently overwrote the first. Confirm the other box is
+finished, then `--force` to take the store.
 
 ---
 
@@ -107,7 +146,9 @@ Pick one and keep it. To switch: `scripts/pull.sh --dir <the-other-dir>`.
 | log/reports up | `scripts/logs-push.sh -m "msg"` |
 | log entry count + recent reports | `scripts/logs-pull.sh --list` |
 | preview any command | add `--dry-run` |
-| shrink remote history | `scripts/push.sh --squash` |
+| take a store owned by another box | `scripts/push.sh --force` (confirm it is idle first) |
+| why did autopush not run | `cat ~/.claude-sessions/.autopush.log` |
+| ~~shrink remote history~~ | ~~`--squash`~~ - spent, see Phase 0. Do not use. |
 
 ## When something goes wrong
 

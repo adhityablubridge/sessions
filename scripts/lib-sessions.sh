@@ -100,8 +100,12 @@ list_sessions() {
     uuid=$(basename "$f"); uuid=${uuid%.gz}; uuid=${uuid%.jsonl}
     sz=$(human "$(stat -c%s "$f")")
     d=$(date -r "$f" '+%Y-%m-%d %H:%M')
-    if [ "${f##*.}" = gz ]; then prev=$(zcat "$f" 2>/dev/null | head -c 400000)
-    else                         prev=$(head -c 400000 "$f" 2>/dev/null); fi
+    if [ "${f##*.}" = gz ]; then prev=$(zcat "$f" 2>/dev/null | head -c 400000 || true)
+    else                         prev=$(head -c 400000 "$f" 2>/dev/null || true); fi
+    # A preview is cosmetic: never let it abort the listing. Both stages can
+    # exit non-zero for benign reasons - grep -m1 takes SIGPIPE (141) when
+    # python3 exits after its single readline, and pipefail would otherwise
+    # propagate that and kill the whole script on the FIRST session.
     prev=$(printf '%s' "$prev" | grep -m1 '"role":"user"' 2>/dev/null | \
       python3 -c 'import sys,json
 try:
@@ -109,7 +113,7 @@ try:
   c=o.get("message",{}).get("content",o.get("content",""))
   if isinstance(c,list): c=" ".join(x.get("text","") for x in c if isinstance(x,dict))
   print(str(c).replace(chr(10)," ")[:60])
-except Exception: print("")' 2>/dev/null)
+except Exception: print("")' 2>/dev/null || true)
     printf '%-38s %-16s %8s  %s\n' "$uuid" "$d" "$sz" "$prev"
   done
 }
