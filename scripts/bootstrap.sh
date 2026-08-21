@@ -92,6 +92,28 @@ info "  vault     : ${VAULT_DIR:-<unset, logs skipped>}"
 echo
 
 # --- 2. work repos -----------------------------------------------------------
+# Pre-seed GitHub's host keys so an SSH clone cannot stall on an interactive
+# "authenticity of host can't be established" prompt. Fingerprints are fetched
+# from GitHub's own metadata endpoint, not hardcoded, so they stay correct if
+# GitHub rotates them.
+seed_known_hosts() {
+  local kh="$HOME/.ssh/known_hosts"
+  grep -q '^github.com ' "$kh" 2>/dev/null && return 0
+  mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+  local keys
+  keys="$(curl -fsS --max-time 15 https://api.github.com/meta 2>/dev/null \
+          | python3 -c 'import sys,json
+try:
+  for k in json.load(sys.stdin).get("ssh_keys",[]): print("github.com "+k)
+except Exception: pass' 2>/dev/null)"
+  if [ -n "$keys" ]; then
+    printf '%s\n' "$keys" >> "$kh"; chmod 600 "$kh"
+    info "seeded github.com host keys into known_hosts"
+  else
+    warn "could not fetch github.com host keys; an SSH clone may prompt"
+  fi
+}
+
 clone_or_update() {         # url branch dest label
   local url="$1" br="$2" dest="$3" label="$4"
   if [ -d "$dest/.git" ]; then
@@ -108,6 +130,7 @@ clone_or_update() {         # url branch dest label
 }
 
 if [ "$SKIP_WORK" = 0 ]; then
+  seed_known_hosts
   clone_or_update "$CP_URL" "$CP_BRANCH" "$WORK_ROOT" "CP" || true
 
   BT="$WORK_ROOT/${BLUTRAIN_PATH:-BluTrain}"
