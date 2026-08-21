@@ -57,24 +57,31 @@ NAME="$(encode_path "$LAUNCH_DIR")"
 TARGET="$LIVE_DIR/projects/$NAME"
 
 # A RUNNING claude owns its transcript: it holds the session in memory and
-# rewrites the file from that state. Overwriting such a file is pointless (the
-# process reverts it seconds later) and the adopt in step 3 would then snapshot
-# a half-written file into the store. push.sh already refuses this; pull.sh must
-# too. Only claude processes holding a transcript in THIS project dir matter.
-if [ -d "$TARGET" ] && command -v fuser >/dev/null 2>&1; then
-  open_pids=$(fuser "$TARGET"/*.jsonl 2>/dev/null | tr -s ' ' || true)
-  if [ -n "$open_pids" ]; then
-    die "claude is still running with session file(s) in this project open.
+# rewrites the file from that state, so anything restored underneath it is
+# reverted seconds later - and worse, the rewrite can DIVERGE from the stored
+# copy rather than just truncate it, turning a clean continuation into a real
+# fork. Refuse up front for exactly the sessions that are loaded.
+#
+# NOTE: an earlier version of this guard used `fuser` on the transcripts. That
+# does not work - claude appends in bursts and closes the file in between, so
+# the handle check reads empty while the process is very much still in charge.
+# loaded_sessions() reads --resume=<uuid> off the process table instead.
+if [ -d "$TARGET" ]; then
+  BUSY=""
+  while read -r u pid; do
+    [ -n "$u" ] || continue
+    [ -f "$TARGET/$u.jsonl" ] || continue      # loaded, but not in THIS project
+    BUSY="$BUSY    $u  (pid $pid)"$'\n'
+  done <<EOF
+$(loaded_sessions)
+EOF
+  if [ -n "$BUSY" ]; then
+    die "claude is running with session(s) from this project loaded:
 
-  Open by pid(s):$open_pids
-$(for p in $open_pids; do
-    ps -o args= -p "$p" 2>/dev/null | grep -o -- '--resume=[0-9a-f-]*' | sed 's/^/    /'
-  done)
-
-  A running claude rewrites its transcript from memory, so anything restored
-  here is reverted within seconds - and --adopt would push that half-written
-  file into the store. Close those sessions (quit the VS Code Claude panels,
-  do not kill -9), then re-run."
+$BUSY
+  A running claude rewrites its transcript from memory, so restoring now is
+  reverted within seconds and can create a real fork. Quit those Claude panels
+  in VS Code (a clean exit, not kill -9), then re-run this command."
   fi
 fi
 info "launch dir : $LAUNCH_DIR"

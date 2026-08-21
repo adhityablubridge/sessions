@@ -166,6 +166,22 @@ classify_session() {
   if [ "$ns" -gt "$nl" ]; then echo take; else echo keep; fi
 }
 
+# --- which sessions are LOADED by a running claude ---------------------------
+# fuser is not enough: claude appends in bursts and closes the file between
+# them, so a handle check almost always comes back empty even though the
+# process holds the whole transcript in memory and will rewrite it from that
+# state. The reliable signal is the process's own --resume=<uuid> argument.
+#
+# Echoes "<uuid> <pid>" per line for every running claude with a session loaded.
+loaded_sessions() {
+  ps -eo pid,args 2>/dev/null | while read -r pid rest; do
+    case "$rest" in *claude*) ;; *) continue ;; esac
+    local u
+    u=$(printf '%s' "$rest" | grep -o -- '--resume=[0-9a-fA-F-]\{36\}' | cut -d= -f2)
+    [ -n "$u" ] && printf '%s %s\n' "$u" "$pid"
+  done
+}
+
 # Record who last held the store, so two boxes can't silently diverge.
 write_owner() {
   printf 'host=%s\nuser=%s\nlaunch_dir=%s\nstamp=%s\n' \
