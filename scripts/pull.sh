@@ -34,6 +34,13 @@ run() { if [ "$DRY" = 1 ]; then printf '  [dry-run] %s\n' "$*"; else eval "$@"; 
 if [ "$DO_FETCH" = 1 ]; then
   if [ -d "$REPO_DIR/.git" ]; then
     info "fetching latest sessions into $REPO_DIR"
+    # Older versions of this script wrote .owner on pull, so a stale local edit
+    # may be blocking the fast-forward. push.sh is the only legitimate writer,
+    # so a local modification here is always a discardable artifact.
+    if ! git -C "$REPO_DIR" diff --quiet -- 'projects/*/.owner' 2>/dev/null; then
+      info "discarding locally-modified .owner (push.sh owns that file)"
+      run "git -C '$REPO_DIR' checkout -- 'projects/*/.owner' 2>/dev/null || true"
+    fi
     run "git -C '$REPO_DIR' pull --ff-only" || warn "git pull failed - continuing with local store"
   else
     warn "$REPO_DIR is not a git repo; using it as a plain directory"
@@ -166,7 +173,9 @@ if [ -d "$REPO_DIR/rules" ]; then
   fi
 fi
 
-[ "$DRY" = 1 ] || write_owner "$LAUNCH_DIR"
+# NOTE: deliberately does NOT write .owner. That file is tracked and records
+# who last PUSHED; writing it here dirties the working tree and makes the next
+# `git pull --ff-only` abort with "local changes would be overwritten".
 
 echo; info "sessions available (resume from: $LAUNCH_DIR)"
 list_sessions "$TARGET"
