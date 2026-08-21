@@ -134,8 +134,15 @@ classify_session() {
   local gz="$1" live="$2"
   [ -f "$live" ] || { echo take; return 0; }          # nothing local to lose
   local nl ns
-  nl=$(wc -l < "$live" 2>/dev/null || echo 0)
-  ns=$(zcat "$gz" 2>/dev/null | wc -l || echo 0)
+  # The fallback MUST be outside the substitution. `x=$(cmd || echo 0)` captures
+  # BOTH the real output and the 0 when cmd printed and then exited non-zero -
+  # which zcat does (warning) on a .gz written from a file being appended to.
+  # That yielded "1555\n0" and broke every [ -eq ] below.
+  nl=$(wc -l < "$live" 2>/dev/null) || nl=""
+  ns=$(zcat "$gz" 2>/dev/null | wc -l) || ns=""
+  # Anything not a plain integer means we could not measure a side. Refusing is
+  # the only safe verdict - never silently overwrite on a failed measurement.
+  case "$nl$ns" in *[!0-9]*|'') echo fork; return 0 ;; esac
   if [ "$ns" -eq "$nl" ]; then
     # Same length: identical content is a no-op, differing content is a fork.
     if [ "$(md5sum < "$live" | cut -d' ' -f1)" = \

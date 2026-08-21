@@ -48,6 +48,28 @@ fi
 check_launch_dir "$LAUNCH_DIR"
 NAME="$(encode_path "$LAUNCH_DIR")"
 TARGET="$LIVE_DIR/projects/$NAME"
+
+# A RUNNING claude owns its transcript: it holds the session in memory and
+# rewrites the file from that state. Overwriting such a file is pointless (the
+# process reverts it seconds later) and the adopt in step 3 would then snapshot
+# a half-written file into the store. push.sh already refuses this; pull.sh must
+# too. Only claude processes holding a transcript in THIS project dir matter.
+if [ -d "$TARGET" ] && command -v fuser >/dev/null 2>&1; then
+  open_pids=$(fuser "$TARGET"/*.jsonl 2>/dev/null | tr -s ' ' || true)
+  if [ -n "$open_pids" ]; then
+    die "claude is still running with session file(s) in this project open.
+
+  Open by pid(s):$open_pids
+$(for p in $open_pids; do
+    ps -o args= -p "$p" 2>/dev/null | grep -o -- '--resume=[0-9a-f-]*' | sed 's/^/    /'
+  done)
+
+  A running claude rewrites its transcript from memory, so anything restored
+  here is reverted within seconds - and --adopt would push that half-written
+  file into the store. Close those sessions (quit the VS Code Claude panels,
+  do not kill -9), then re-run."
+  fi
+fi
 info "launch dir : $LAUNCH_DIR"
 info "project dir: $TARGET"
 info "store      : $STORE (mode=$MODE)"
