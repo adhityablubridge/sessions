@@ -25,7 +25,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-WORK_ROOT=""; SKIP_LOGS=0; ADOPT=""; INSTALL_HOOK=1; SKIP_WORK=0; WORK_ONLY=0
+WORK_ROOT=""; SKIP_LOGS=0; ADOPT=""; INSTALL_HOOK=1; SKIP_WORK=0; WORK_ONLY=0; HOOK_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir)        WORK_ROOT="$2"; shift 2 ;;
@@ -34,6 +34,7 @@ while [ $# -gt 0 ]; do
     --skip-work)  SKIP_WORK=1; shift ;;
     --work-only)  WORK_ONLY=1; shift ;;
     --no-hook)    INSTALL_HOOK=0; shift ;;
+    --hook-only)  SKIP_WORK=1; SKIP_LOGS=1; HOOK_ONLY=1; shift ;;
     -h|--help)    sed -n '2,25p' "$0"; exit 0 ;;
     *)            echo "unknown flag: $1" >&2; exit 1 ;;
   esac
@@ -162,8 +163,18 @@ preflight_auth "$REPO_DIR"
 ok "auth verified"
 
 # --- 4. sessions -------------------------------------------------------------
+if [ "$HOOK_ONLY" = 1 ]; then
+  info "hook-only: skipping session restore"
+else
 info "restoring sessions"
-"$SCRIPT_DIR/pull.sh" --dir "$WORK_ROOT" $ADOPT
+# Non-fatal: pull.sh legitimately REFUSES when the target project dir already
+# holds real sessions (a prior restore). Under `set -e` that aborted the whole
+# script, so the hook install below never ran and auto-save silently kept
+# pointing at a stale --dir. Restoring sessions is optional; arming auto-save
+# is not.
+"$SCRIPT_DIR/pull.sh" --dir "$WORK_ROOT" $ADOPT \
+  || warn "pull did not run (already populated, or failed) - continuing"
+fi
 
 # --- 5. logs -----------------------------------------------------------------
 if [ "$SKIP_LOGS" = 0 ] && [ -n "${VAULT_DIR:-}" ]; then
