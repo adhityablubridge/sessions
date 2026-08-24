@@ -66,24 +66,19 @@ TARGET="$LIVE_DIR/projects/$NAME"
 # does not work - claude appends in bursts and closes the file in between, so
 # the handle check reads empty while the process is very much still in charge.
 # loaded_sessions() reads --resume=<uuid> off the process table instead.
-if [ -d "$TARGET" ]; then
-  BUSY=""
-  while read -r u pid; do
-    [ -n "$u" ] || continue
-    [ -f "$TARGET/$u.jsonl" ] || continue      # loaded, but not in THIS project
-    BUSY="$BUSY    $u  (pid $pid)"$'\n'
-  done <<EOF
+# Collect the loaded uuids into a lookup string. This is PER SESSION, not a
+# global abort: an earlier version died if anything in the dir was loaded, which
+# meant two open VS Code panels blocked the repair of an unrelated third
+# session. Only the sessions actually held by a process are skipped.
+BUSY_UUIDS=" "
+while read -r u pid; do
+  [ -n "$u" ] || continue
+  BUSY_UUIDS="$BUSY_UUIDS$u "
+  [ -f "$TARGET/$u.jsonl" ] && info "in use, will be skipped: ${u%%-*} (pid $pid)"
+done <<EOF
 $(loaded_sessions)
 EOF
-  if [ -n "$BUSY" ]; then
-    die "claude is running with session(s) from this project loaded:
-
-$BUSY
-  A running claude rewrites its transcript from memory, so restoring now is
-  reverted within seconds and can create a real fork. Quit those Claude panels
-  in VS Code (a clean exit, not kill -9), then re-run this command."
-  fi
-fi
+session_busy() { case "$BUSY_UUIDS" in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 info "launch dir : $LAUNCH_DIR"
 info "project dir: $TARGET"
 info "store      : $STORE (mode=$MODE)"
@@ -113,6 +108,11 @@ if [ -e "$TARGET" ] && [ ! -L "$TARGET" ]; then
     for f in "$TARGET"/*.jsonl; do
       [ -e "$f" ] || continue
       b=$(basename "$f")
+      # A loaded session is mid-conversation: snapshotting it now stores a
+      # partial transcript that the next push would then have to reconcile.
+      if session_busy "${b%.jsonl}"; then
+        info "  in use, not adopting: $b"; continue
+      fi
       if [ "$MODE" = compress ]; then
         if [ -f "$STORE/$b.gz" ]; then
           case "$(classify_session "$STORE/$b.gz" "$f")" in
@@ -145,10 +145,18 @@ else
   # content, not mtime (see classify_session in lib-sessions.sh for why mtime
   # cannot work here).
   run "mkdir -p '$TARGET'"
-  cnt=0; kept=0; forked=0
+  cnt=0; kept=0; forked=0; busy=0
   for f in "$STORE"/*.jsonl.gz; do
     [ -e "$f" ] || continue
     b=$(basename "$f" .gz); dst="$TARGET/$b"
+    # Writing under a running claude is futile - it rewrites the file from
+    # memory seconds later, and that rewrite can DIVERGE rather than merely
+    # truncate, turning a clean continuation into a real fork.
+    if session_busy "${b%.jsonl}"; then
+      busy=$((busy+1))
+      warn "IN USE, not restored: $b (close the Claude panel, then re-run)"
+      continue
+    fi
     case "$(classify_session "$f" "$dst")" in
       keep)
         kept=$((kept+1)) ;;                       # live is equal or ahead
@@ -165,8 +173,9 @@ else
         run "gzip -dc '$f' > '$dst'"; cnt=$((cnt+1)) ;;
     esac
   done
-  ok "restored $cnt session(s) into $TARGET ($kept already current, $forked diverged)"
+  ok "restored $cnt session(s) into $TARGET ($kept already current, $forked diverged, $busy in use)"
   [ "$forked" -eq 0 ] || warn "$forked session(s) DIVERGED - resolve the .store files above"
+  [ "$busy" -eq 0 ] || warn "$busy session(s) SKIPPED as in use - close those panels and re-run"
   [ "$DRY" = 1 ] || sync_sidecars "$STORE" "$TARGET" "restoring"
 fi
 

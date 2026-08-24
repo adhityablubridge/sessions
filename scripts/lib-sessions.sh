@@ -45,7 +45,16 @@ sync_sidecars() {
   [ "$n" -gt 0 ] || return 0
   info "$label $n subagent transcript(s)"
   if command -v rsync >/dev/null 2>&1; then
-    rsync -a --include='*/' --include='*.jsonl' --exclude='*' \
+    # --exclude='/*.jsonl' MUST come first: it is anchored at the transfer root,
+    # and first-match-wins. Without it the unanchored --include='*.jsonl' also
+    # matches TOP-LEVEL transcripts, which breaks both directions:
+    #   live -> store : copies 31 UNCOMPRESSED transcripts (~600MB) into the
+    #                   store beside the .gz files
+    #   store -> live : copies those stale plain files back, OVERWRITING the
+    #                   session pull.sh step 4 has just correctly restored
+    # The find -mindepth 2 above only computes the count; it does not constrain
+    # rsync. The tar fallback below is correct because it does use -mindepth 2.
+    rsync -a --exclude='/*.jsonl' --include='*/' --include='*.jsonl' --exclude='*' \
           --prune-empty-dirs "$src/" "$dst/"
   else
     ( cd "$src" && find . -mindepth 2 -name '*.jsonl' -print0 \
@@ -161,9 +170,34 @@ classify_session() {
     h_short=$(zcat "$gz" 2>/dev/null | md5sum | cut -d' ' -f1)
     h_long=$(head -n "$n" "$live" | md5sum | cut -d' ' -f1)
   fi
-  if [ "$h_short" != "$h_long" ]; then echo fork; return 0; fi
+  if [ "$h_short" != "$h_long" ]; then
+    # Not a raw prefix - but that is usually an artifact, not a real fork. A
+    # transcript carries interleaved BOOKKEEPING records (mode, last-prompt,
+    # queue-operation) that are UI/scheduler state, not conversation, and which
+    # claude rewrites at the tail on exit. One such trailing line is enough to
+    # break a byte-exact prefix test on two copies that agree completely on
+    # every actual message. Retry ignoring those records; only if the
+    # conversation-bearing streams still disagree is it a genuine divergence.
+    local conv_short conv_long cn
+    if [ "$shorter" = live ]; then
+      cn=$(session_conv "$live" | wc -l)
+      conv_short=$(session_conv "$live" | md5sum | cut -d' ' -f1)
+      conv_long=$(zcat "$gz" 2>/dev/null | session_conv - | head -n "$cn" | md5sum | cut -d' ' -f1)
+    else
+      cn=$(zcat "$gz" 2>/dev/null | session_conv - | wc -l)
+      conv_short=$(zcat "$gz" 2>/dev/null | session_conv - | md5sum | cut -d' ' -f1)
+      conv_long=$(session_conv "$live" | head -n "$cn" | md5sum | cut -d' ' -f1)
+    fi
+    [ "$conv_short" = "$conv_long" ] || { echo fork; return 0; }
+  fi
   # True continuation: take the store copy only when IT is the longer one.
   if [ "$ns" -gt "$nl" ]; then echo take; else echo keep; fi
+}
+
+# Strip the bookkeeping records, leaving only conversation-bearing lines.
+# Reads a file argument, or stdin when given "-".
+session_conv() {
+  grep -v '^{"type":"\(mode\|last-prompt\|queue-operation\|summary\)"' -- "$1" 2>/dev/null || true
 }
 
 # --- which sessions are LOADED by a running claude ---------------------------
