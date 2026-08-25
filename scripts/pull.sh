@@ -41,6 +41,19 @@ if [ "$DO_FETCH" = 1 ]; then
       info "discarding locally-modified .owner (push.sh owns that file)"
       run "git -C '$REPO_DIR' checkout -- 'projects/*/.owner' 2>/dev/null || true"
     fi
+    # Same for the store blobs. adopt/push write .gz straight into the worktree,
+    # so an interrupted push leaves it dirty and `pull --ff-only` then refuses
+    # FOREVER - the script warns once and carries on with a store that silently
+    # never updates again. Discarding is safe: an uncommitted .gz is only ever a
+    # recompression of a live transcript that is still on disk, so the next
+    # push.sh regenerates it. The manifest is dropped too so that push does not
+    # skip it as "unchanged".
+    if ! git -C "$REPO_DIR" diff --quiet -- "projects/$CANON" 2>/dev/null; then
+      warn "discarding uncommitted store changes (regenerated from live transcripts on next push)"
+      git -C "$REPO_DIR" diff --name-only -- "projects/$CANON" 2>/dev/null | sed 's/^/    /' >&2
+      run "git -C '$REPO_DIR' checkout -- 'projects/$CANON' 2>/dev/null || true"
+      run "rm -f '$MANIFEST'"
+    fi
     run "git -C '$REPO_DIR' pull --ff-only" || warn "git pull failed - continuing with local store"
   else
     warn "$REPO_DIR is not a git repo; using it as a plain directory"

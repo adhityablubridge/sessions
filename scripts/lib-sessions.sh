@@ -78,7 +78,16 @@ ok()   { printf '\033[32mok   :\033[0m %s\n' "$*"; }
 
 # Claude Code names a project dir after the launch directory's absolute path
 # with every "/" replaced by "-".  /root/BluTrain -> -root-BluTrain
-encode_path() { printf '%s' "$1" | sed 's#/#-#g'; }
+# Trailing slashes MUST be stripped first: `--dir /root/BluTrain/` would
+# otherwise encode to "-root-BluTrain-" - a different directory from the
+# "-root-BluTrain" claude actually uses - so sessions restore into a folder
+# --resume never looks at, with no error anywhere. Tab-completion adds that
+# slash, so this is hit by accident constantly.
+encode_path() {
+  local p="$1"
+  while [ "${p%/}" != "$p" ] && [ "$p" != "/" ]; do p="${p%/}"; done
+  printf '%s' "$p" | sed 's#/#-#g'
+}
 
 # The live project dir for a given launch directory.
 live_project_dir() { printf '%s/projects/%s' "$LIVE_DIR" "$(encode_path "$1")"; }
