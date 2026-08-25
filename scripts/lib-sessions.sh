@@ -62,6 +62,15 @@ sync_sidecars() {
   fi
 }
 
+# Shell-quote a string for safe interpolation into a run "..." command, which
+# is eval'd. The scripts wrap paths in literal single quotes, which silently
+# breaks on any path containing an apostrophe - e.g. the real vault path
+# "Adhitya's Vault", where the ' terminates the quote and eval dies with
+# "unexpected EOF while looking for matching `''". Under set -e that killed
+# logs-push.sh before it ever reached git add/commit/push, so reports never
+# synced from this box. Use: run "cp -rn $(shq "$src") $(shq "$dst")"
+shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
 die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 warn() { printf '\033[33mwarn :\033[0m %s\n' "$*" >&2; }
 info() { printf '\033[36m--\033[0m %s\n' "$*"; }

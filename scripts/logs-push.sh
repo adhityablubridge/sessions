@@ -35,7 +35,7 @@ info "vault: $VAULT_DIR"
 info "repo : $LOGS_REPO_DIR (branch $LOGS_BRANCH)"
 
 # --- 1. vault -> repo ---------------------------------------------------------
-run "mkdir -p '$LOGS_REPO_DIR/$REPORT_DIR'"
+run "mkdir -p $(shq "$LOGS_REPO_DIR/$REPORT_DIR")"
 
 # Union-merge upward too, so a line another box pushed while you were working
 # is not erased by your vault copy.
@@ -53,7 +53,7 @@ fi
 
 if [ -d "$VAULT_DIR/$REPORT_DIR" ]; then
   cnt=$(find "$VAULT_DIR/$REPORT_DIR" -name '*.md' 2>/dev/null | wc -l)
-  run "cp -rn '$VAULT_DIR/$REPORT_DIR/.' '$LOGS_REPO_DIR/$REPORT_DIR/' 2>/dev/null || true"
+  run "cp -rn $(shq "$VAULT_DIR/$REPORT_DIR/.") $(shq "$LOGS_REPO_DIR/$REPORT_DIR/") 2>/dev/null || true"
   ok "$cnt report(s)"
 fi
 
@@ -65,7 +65,7 @@ fi
 : "${MSG:=logs: $(hostname) $(date -u '+%Y-%m-%d %H:%M')}"
 run "git -C '$LOGS_REPO_DIR' add -A"
 if [ "$DRY" = 1 ] || ! git -C "$LOGS_REPO_DIR" diff --cached --quiet; then
-  run "git -C '$LOGS_REPO_DIR' commit -q -m '$MSG'"
+  run "git -C $(shq "$LOGS_REPO_DIR") commit -q -m $(shq "$MSG")"
   # First push of a freshly created orphan branch needs -u.
   if git -C "$LOGS_REPO_DIR" rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1; then
     run "git -C '$LOGS_REPO_DIR' push"

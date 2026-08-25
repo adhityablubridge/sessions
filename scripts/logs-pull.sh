@@ -76,7 +76,7 @@ fi
 # --- 2. materialize into the vault -------------------------------------------
 # Copy (not symlink): the vault holds unrelated personal notes and Obsidian is
 # happier with real files. These are kilobytes, so copying is free.
-run "mkdir -p '$VAULT_DIR/$REPORT_DIR'"
+run "mkdir -p $(shq "$VAULT_DIR/$REPORT_DIR")"
 
 # Union-merge, never overwrite: the vault keeps its order and gains any lines
 # only the repo has. Safe against a big local log meeting a small repo copy.
@@ -92,7 +92,7 @@ fi
 if [ -d "$LOGS_REPO_DIR/$REPORT_DIR" ]; then
   # -n (no-clobber): reports are per-session unique filenames, so an existing
   # vault report is always authoritative. Never overwrite one.
-  run "cp -rn '$LOGS_REPO_DIR/$REPORT_DIR/.' '$VAULT_DIR/$REPORT_DIR/' 2>/dev/null || true"
+  run "cp -rn $(shq "$LOGS_REPO_DIR/$REPORT_DIR/.") $(shq "$VAULT_DIR/$REPORT_DIR/") 2>/dev/null || true"
   ok "restored $(find "$LOGS_REPO_DIR/$REPORT_DIR" -name '*.md' | wc -l) report(s)"
 fi
 
