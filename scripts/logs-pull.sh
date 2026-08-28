@@ -64,7 +64,15 @@ if [ ! -d "$LOGS_REPO_DIR/.git" ]; then
   fi
 else
   info "updating $LOGS_REPO_DIR"
-  run "git -C '$LOGS_REPO_DIR' pull --ff-only" || warn "pull failed - using local copy"
+  # A real merge, NOT --ff-only. The logs branch exists to be written from every
+  # box at once, and .gitattributes sets `*.md merge=union` precisely so those
+  # append-only edits reconcile themselves. --ff-only never invokes that driver:
+  # the moment two boxes have both pushed, it dies with "Not possible to
+  # fast-forward" and the script silently falls back to the LOCAL copy, so the
+  # other box's log lines and reports never reach this vault.
+  run "git -C '$LOGS_REPO_DIR' -c user.name=claude-sync -c user.email=sync@localhost \
+       pull --no-rebase --no-edit" \
+    || warn "logs merge failed - using local copy (resolve by hand in $LOGS_REPO_DIR)"
 fi
 
 if [ "$DO_LIST" = 1 ]; then

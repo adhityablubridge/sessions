@@ -68,6 +68,13 @@ if [ "$DRY" = 1 ] || ! git -C "$LOGS_REPO_DIR" diff --cached --quiet; then
   run "git -C $(shq "$LOGS_REPO_DIR") commit -q -m $(shq "$MSG")"
   # First push of a freshly created orphan branch needs -u.
   if git -C "$LOGS_REPO_DIR" rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1; then
+    # Merge before pushing. Another box pushing logs in the meantime makes the
+    # branch diverge, and a bare `git push` is then rejected non-fast-forward.
+    # `*.md merge=union` resolves the log and reports automatically, so this is
+    # normally silent - and it is the same reconciliation logs-pull.sh does.
+    run "git -C '$LOGS_REPO_DIR' -c user.name=claude-sync -c user.email=sync@localhost \
+         pull --no-rebase --no-edit" \
+      || warn "merge with remote logs failed - push will likely be rejected"
     run "git -C '$LOGS_REPO_DIR' push"
   else
     run "git -C '$LOGS_REPO_DIR' push -u origin '$LOGS_BRANCH'"
