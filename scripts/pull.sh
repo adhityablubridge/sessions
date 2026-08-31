@@ -54,7 +54,33 @@ if [ "$DO_FETCH" = 1 ]; then
       run "git -C '$REPO_DIR' checkout -- 'projects/$CANON' 2>/dev/null || true"
       run "rm -f '$MANIFEST'"
     fi
-    run "git -C '$REPO_DIR' pull --ff-only" || warn "git pull failed - continuing with local store"
+    # --ff-only cannot survive two boxes both committing, and this repo has
+    # several writers by design. Merge instead, then auto-resolve ONLY the
+    # store: those .gz blobs are binary (unmergeable) but also derived - the
+    # live transcripts are the source of truth and the next push regenerates
+    # them, so taking the remote side loses nothing. A conflict anywhere else
+    # (scripts/, sessions.conf, SOP.md) is real work and must NOT be discarded,
+    # so abort and hand it to the human.
+    if ! run "git -C '$REPO_DIR' -c user.name=claude-sync -c user.email=sync@localhost \
+              pull --no-rebase --no-edit"; then
+      conflicts=$(git -C "$REPO_DIR" diff --name-only --diff-filter=U 2>/dev/null)
+      outside=$(printf '%s\n' "$conflicts" | grep -v "^projects/$CANON/" | grep -v '^$' || true)
+      if [ -n "$conflicts" ] && [ -z "$outside" ]; then
+        warn "store blobs conflicted; taking the remote copy (regenerated on next push)"
+        printf '%s\n' "$conflicts" | sed 's/^/    /' >&2
+        run "git -C '$REPO_DIR' checkout --theirs -- 'projects/$CANON'"
+        run "git -C '$REPO_DIR' add -- 'projects/$CANON'"
+        run "git -C '$REPO_DIR' -c user.name=claude-sync -c user.email=sync@localhost \
+             commit -q --no-edit"
+        run "rm -f '$MANIFEST'"
+        ok "store conflict resolved from remote"
+      else
+        run "git -C '$REPO_DIR' merge --abort 2>/dev/null || true"
+        warn "merge conflicts OUTSIDE the store - not auto-resolving:"
+        printf '%s\n' "$outside" | sed 's/^/    /' >&2
+        warn "resolve by hand in $REPO_DIR, then re-run. Continuing with local store."
+      fi
+    fi
   else
     warn "$REPO_DIR is not a git repo; using it as a plain directory"
   fi
