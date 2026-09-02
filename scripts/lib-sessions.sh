@@ -273,7 +273,7 @@ setup_auth() {
   if [ -n "${GH_TOKEN:-}" ]; then
     export GH_TOKEN
     git -C "$repo" config credential.helper \
-      '!f() { test "$1" = get && printf "username=x-access-token\npassword=%s\n" "$GH_TOKEN"; }; f'
+      '!f() { test "$1" = get && { [ -n "$GH_TOKEN" ] || . "$HOME/.claude-sync.local.conf"; } && printf "username=x-access-token\npassword=%s\n" "$GH_TOKEN"; }; f'
     return 0
   fi
   if [ -n "${SESSIONS_SSH_KEY:-}" ] && [ -f "$SESSIONS_SSH_KEY" ]; then

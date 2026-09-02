@@ -183,9 +183,29 @@ else
   run "git -C '$REPO_DIR' add -A -- $ADD_PATHS"
   if [ "$DRY" = 1 ] || ! git -C "$REPO_DIR" diff --cached --quiet; then
     run "git -C '$REPO_DIR' commit -q -m '$MSG'"
+  else
+    info "nothing new to commit"
+  fi
+
+  # Integrate whatever another box pushed first, or our push is rejected as a
+  # non-fast-forward. The store is additive per session, so a merge is normally
+  # clean; on the rare conflict keep OUR freshly compressed copies.
+  if [ "$DRY" = 0 ]; then
+    if ! git -C "$REPO_DIR" pull --no-rebase --no-edit -q; then
+      warn "merge conflict - keeping this box's compressed sessions"
+      git -C "$REPO_DIR" status --short | grep -E '^(UU|AA|DU|UD)' | awk '{print $2}' \
+        | xargs -r git -C "$REPO_DIR" checkout --ours -- 2>/dev/null || true
+      git -C "$REPO_DIR" add -A -- projects
+      git -C "$REPO_DIR" commit -q --no-edit 2>/dev/null || true
+    fi
+  fi
+
+  # Push whenever we are ahead of upstream. The old code only pushed when it had
+  # just committed, so commits left behind by a failed push stayed stuck forever.
+  if [ "$DRY" = 1 ] || [ -n "$(git -C "$REPO_DIR" log --oneline '@{u}..HEAD' 2>/dev/null)" ]; then
     run "git -C '$REPO_DIR' push"
   else
-    info "nothing to commit"
+    info "already up to date with the remote"
   fi
 fi
 ok "pushed. Safe to destroy this instance."
