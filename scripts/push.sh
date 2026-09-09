@@ -98,7 +98,7 @@ else
     while IFS=$'\t' read -r u s; do prev["$u"]="$s"; done < "$MANIFEST"
   fi
   [ "$DRY" = 1 ] || : > "$MANIFEST.new"
-  changed=0; skipped=0
+  changed=0; skipped=0; refused=0
   for f in "$TARGET"/*.jsonl; do
     [ -e "$f" ] || continue
     b=$(basename "$f"); sz=$(stat -c%s "$f")
@@ -112,10 +112,10 @@ else
     if [ -f "$STORE/$b.gz" ]; then
       case "$(classify_session "$STORE/$b.gz" "$f")" in
         take) warn "store is AHEAD of live, not overwriting: $b (pull first)"
-              skipped=$((skipped+1)); continue ;;
+              skipped=$((skipped+1)); refused=$((refused+1)); continue ;;
         fork) warn "DIVERGED, store kept, not overwriting: $b"
               warn "  compare: zcat '$STORE/$b.gz' | wc -l ; wc -l '$f'"
-              skipped=$((skipped+1)); continue ;;
+              skipped=$((skipped+1)); refused=$((refused+1)); continue ;;
       esac
     fi
     info "compressing $b ($(human "$sz"))"
@@ -207,5 +207,11 @@ else
   else
     info "already up to date with the remote"
   fi
+fi
+if [ "${refused:-0}" -gt 0 ]; then
+  warn "pushed, but ${refused} session(s) were NOT uploaded (diverged or store ahead)."
+  warn "  THIS BOX IS NOT FULLY BACKED UP - resolve those before destroying it."
+  warn "  Each was listed above with a compare command; the store copy is kept."
+  exit 1
 fi
 ok "pushed. Safe to destroy this instance."
