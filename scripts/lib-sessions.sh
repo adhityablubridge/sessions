@@ -214,8 +214,21 @@ classify_session() {
 
 # Strip the bookkeeping records, leaving only conversation-bearing lines.
 # Reads a file argument, or stdin when given "-".
+#
+# These are per-box UI/telemetry state that claude rewrites as it goes, so two
+# copies of the same conversation routinely disagree on them. A single such
+# line is enough to break a byte-exact prefix test and report a phantom fork -
+# `cost-state` alone cost a full investigation and a needless duplicate session
+# (62a140cc), where the ONLY difference between 1479 and 1696 lines was one
+# cost-telemetry record.
+#
+# The substantive types are user / assistant / system / attachment. Everything
+# listed here is metadata. An UNKNOWN type is deliberately left in, so a new
+# record type makes comparisons stricter (more forks reported, nothing lost)
+# rather than looser.
 session_conv() {
-  grep -v '^{"type":"\(mode\|last-prompt\|queue-operation\|summary\)"' -- "$1" 2>/dev/null || true
+  grep -v '^{"type":"\(mode\|last-prompt\|queue-operation\|summary\|cost-state\|permission-mode\|custom-title\|agent-name\|atis-latch\|file-history-snapshot\)"' \
+    -- "$1" 2>/dev/null || true
 }
 
 # --- which sessions are LOADED by a running claude ---------------------------
