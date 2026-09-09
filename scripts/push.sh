@@ -93,17 +93,26 @@ if [ "$MODE" = link ]; then
 else
   # Only re-compress sessions whose size changed since the last push. Rewriting
   # an unchanged 70MB blob would add a fresh ~17MB object to git for nothing.
-  declare -A prev=()
+  declare -A prev=() prev_gz=()
   if [ -f "$MANIFEST" ]; then
-    while IFS=$'\t' read -r u s; do prev["$u"]="$s"; done < "$MANIFEST"
+    # Third column is the store .gz size AS WE LEFT IT. Without it the fast path
+    # below is unsound: our live file can be unchanged since our last push while
+    # ANOTHER box has replaced the store copy, and we would then skip the
+    # session without ever running classify_session - silently reporting it as
+    # "unchanged", leaving `refused` at 0, and printing "Safe to destroy".
+    while IFS=$'\t' read -r u s g; do prev["$u"]="$s"; prev_gz["$u"]="${g:-}"; done < "$MANIFEST"
   fi
   [ "$DRY" = 1 ] || : > "$MANIFEST.new"
   changed=0; skipped=0; refused=0
   for f in "$TARGET"/*.jsonl; do
     [ -e "$f" ] || continue
     b=$(basename "$f"); sz=$(stat -c%s "$f")
-    [ "$DRY" = 1 ] || printf '%s\t%s\n' "$b" "$sz" >> "$MANIFEST.new"
-    if [ "${prev[$b]:-}" = "$sz" ] && [ -f "$STORE/$b.gz" ]; then
+    gzsz=$(stat -c%s "$STORE/$b.gz" 2>/dev/null || echo "")
+    [ "$DRY" = 1 ] || printf '%s\t%s\t%s\n' "$b" "$sz" "$gzsz" >> "$MANIFEST.new"
+    # Fast path only when BOTH sides are exactly as this box left them. An empty
+    # recorded gz size means an old 2-column manifest: fall through and verify.
+    if [ "${prev[$b]:-}" = "$sz" ] && [ -n "$gzsz" ] \
+       && [ -n "${prev_gz[$b]:-}" ] && [ "${prev_gz[$b]}" = "$gzsz" ]; then
       skipped=$((skipped+1)); continue
     fi
     # Never let a shorter live copy overwrite a stored one that is ahead. Normal
@@ -135,6 +144,14 @@ if [ "${KEEP:-0}" -gt 0 ]; then
     for f in "${all[@]:$KEEP}"; do
       u=$(basename "$f"); u=${u%.gz}; u=${u%.jsonl}
       case " ${KEEP_SESSIONS:-} " in *" $u "*) info "keeping pinned $u"; continue ;; esac
+      # A session with a LIVE copy here is in use, whatever its .gz mtime says.
+      # That mtime records the last recompression, not the last use, so a
+      # session we declined to overwrite (diverged / store ahead) keeps an old
+      # .gz and sorts to the front of the prune list - which is how 9d6b6d05,
+      # the one session that most needed keeping, got deleted from the store.
+      if [ -f "$TARGET/$u.jsonl" ]; then
+        info "keeping $u (live on this box)"; continue
+      fi
       info "pruning old session $u"
       # Remove the sidecar dir too - otherwise <uuid>/subagents/ survives every
       # prune and the store slowly refills with transcripts for dead sessions.
