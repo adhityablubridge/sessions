@@ -1,4 +1,11 @@
+<<<<<<< HEAD
 host=blubridge25-MS-7E06
 user=blu-bridge25
 launch_dir=/home/blu-bridge25/CP
 stamp=2026-09-18T04:39:30Z
+=======
+host=slim-game-shines-fin-03
+user=root
+launch_dir=/root/Adhi/BluTrain/
+stamp=2026-09-17T17:57:39Z
+>>>>>>> 29f2a2af6304d5316ae7452318dadb0febc10009
