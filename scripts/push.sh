@@ -223,8 +223,24 @@ else
   if [ "$DRY" = 0 ]; then
     if ! git -C "$REPO_DIR" pull --no-rebase --no-edit -q; then
       warn "merge conflict - keeping this box's compressed sessions"
+      # .owner and .manifest.tsv are PER-BOX GENERATED STATE, not content: one
+      # records who holds the store, the other is this box's compression cache.
+      # Merging them is meaningless - git produced a conflicted .owner listing
+      # two hostnames, and `checkout --ours` on a text conflict does not always
+      # clear the markers either. Regenerate them outright instead of resolving.
+      write_owner "$LAUNCH_DIR"
+      rm -f "$MANIFEST"            # rebuilt on the next push
       git -C "$REPO_DIR" status --short | grep -E '^(UU|AA|DU|UD)' | awk '{print $2}' \
         | xargs -r git -C "$REPO_DIR" checkout --ours -- 2>/dev/null || true
+      # Whatever checkout --ours left behind, strip any surviving markers from
+      # text files rather than committing them.
+      while IFS= read -r cf; do
+        [ -f "$REPO_DIR/$cf" ] || continue
+        awk '/^<<<<<<< /{o=1;next} /^=======$/{if(o){o=2};next} /^>>>>>>> /{o=0;next} o!=2{print}' \
+          "$REPO_DIR/$cf" > "$REPO_DIR/$cf.resolved" && mv "$REPO_DIR/$cf.resolved" "$REPO_DIR/$cf"
+        warn "  stripped conflict markers from $cf"
+      done < <(grep -rl -e '^<<<<<<< ' -e '^>>>>>>> ' "$REPO_DIR/projects" 2>/dev/null \
+                 | sed "s#^$REPO_DIR/##" || true)
       # The checkout above is best-effort; if any path still carries conflict
       # markers, committing would publish them (this is exactly how a mangled
       # .owner reached every box). Refuse instead of committing garbage.
