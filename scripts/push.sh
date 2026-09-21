@@ -67,7 +67,20 @@ fi
 
 # --- 0b. refuse to snapshot a session that is being written right now ----------
 if command -v fuser >/dev/null 2>&1; then
-  busy=$(fuser "$TARGET"/*.jsonl 2>/dev/null | tr -s ' ' || true)
+  # BOUNDED. fuser walks /proc and stats every open file, so one wedged FUSE
+  # mount hangs it forever - observed on this laptop, where a stuck
+  # `fuser /var/lib/dpkg/lock` had been running 4 hours and push.sh froze here
+  # with no output at all. The check is advisory, so on timeout we warn and
+  # continue rather than blocking the backup on a broken system call.
+  # The fallback must be OUTSIDE the substitution: `x=$(cmd || true)` forces $?
+  # to 0, so a timeout branch keyed on $? could never fire. rc 1 just means "no
+  # process holds these files", which is the normal case.
+  busy=""; fuser_rc=0
+  busy=$(timeout 5 fuser "$TARGET"/*.jsonl 2>/dev/null | tr -s ' ') || fuser_rc=$?
+  if [ "$fuser_rc" = 124 ]; then
+    warn "fuser timed out (wedged mount?) - cannot tell if a session is open; continuing"
+    busy=""
+  fi
   if [ -n "$busy" ]; then
     # A mid-write snapshot silently truncates the tail - i.e. loses exactly the
     # work you are pushing in order to preserve. Only --force may proceed.
@@ -212,6 +225,15 @@ else
       warn "merge conflict - keeping this box's compressed sessions"
       git -C "$REPO_DIR" status --short | grep -E '^(UU|AA|DU|UD)' | awk '{print $2}' \
         | xargs -r git -C "$REPO_DIR" checkout --ours -- 2>/dev/null || true
+      # The checkout above is best-effort; if any path still carries conflict
+      # markers, committing would publish them (this is exactly how a mangled
+      # .owner reached every box). Refuse instead of committing garbage.
+      if git -C "$REPO_DIR" grep -l -e '^<<<<<<< ' -e '^>>>>>>> ' -- projects >/dev/null 2>&1 \
+         || grep -rl -e '^<<<<<<< ' -e '^>>>>>>> ' "$REPO_DIR/projects" >/dev/null 2>&1; then
+        die "conflict markers still present after resolution - refusing to commit.
+  Inspect and fix by hand:
+    grep -rl '^<<<<<<< ' '$REPO_DIR/projects'"
+      fi
       git -C "$REPO_DIR" add -A -- projects
       git -C "$REPO_DIR" commit -q --no-edit 2>/dev/null || true
     fi

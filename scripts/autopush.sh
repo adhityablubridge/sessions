@@ -57,7 +57,9 @@ fi
 if command -v fuser >/dev/null 2>&1; then
   waited=0
   while [ "$waited" -lt "$WAIT_SECS" ]; do
-    busy=$(fuser "$TARGET"/*.jsonl 2>/dev/null | tr -s ' ' || true)
+    # Bounded for the same reason as push.sh: a wedged mount makes fuser hang,
+    # which would stall a SessionEnd hook for its whole 300s timeout.
+    busy=$(timeout 5 fuser "$TARGET"/*.jsonl 2>/dev/null | tr -s ' ' || true)
     [ -n "$busy" ] || break
     sleep 1; waited=$((waited+1))
   done

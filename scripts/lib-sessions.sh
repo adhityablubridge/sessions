@@ -253,7 +253,16 @@ write_owner() {
     "$(hostname)" "$(id -un)" "$1" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$STORE/.owner"
 }
 
-read_owner() { [ -f "$STORE/.owner" ] && cat "$STORE/.owner" || true; }
+# Drop git conflict markers and keep only the FIRST record. A merge once
+# committed an unresolved .owner, so `sed -n s/^host=//p` returned TWO
+# hostnames joined by a newline - the ownership comparison could then never
+# match and every push demanded --force.
+read_owner() {
+  [ -f "$STORE/.owner" ] || return 0
+  awk '/^(<<<<<<<|=======|>>>>>>>)/ { next }
+       /^host=/ { if (seen) exit; seen=1 }
+       { print }' "$STORE/.owner"
+}
 
 # --- append-only log merge ---------------------------------------------------
 # Claude Logs.md is append-only and edited from multiple boxes. Copying it in
