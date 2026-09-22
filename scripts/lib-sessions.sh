@@ -145,6 +145,12 @@ except Exception: print("")' 2>/dev/null || true)
   done
 }
 
+# A store blob is only usable if it actually decompresses. A truncated push
+# (observed: 65c5fec6 cut to exactly 262144 bytes by an interrupted write)
+# otherwise makes classify_session unreadable -> "fork" -> push.sh refuses to
+# overwrite it, so the corruption becomes permanent and blocks its own repair.
+gz_ok() { gzip -t "$1" 2>/dev/null; }
+
 # --- decide whether a stored session may overwrite the live one ---------------
 # Sessions are APPEND-ONLY JSONL, which is what makes this decidable: if one
 # copy is a line-exact prefix of the other, the longer one is strictly the more
@@ -169,7 +175,11 @@ classify_session() {
   ns=$(zcat "$gz" 2>/dev/null | wc -l) || ns=""
   # Anything not a plain integer means we could not measure a side. Refusing is
   # the only safe verdict - never silently overwrite on a failed measurement.
-  case "$nl$ns" in *[!0-9]*|'') echo fork; return 0 ;; esac
+  # Test each SEPARATELY: "$nl$ns" concatenated hides an empty side entirely -
+  # nl=1234 with ns="" yields "1234", which passes a numeric test and then blows
+  # up in the [ -eq ] below with "integer expression expected".
+  case "$nl" in ''|*[!0-9]*) echo fork; return 0 ;; esac
+  case "$ns" in ''|*[!0-9]*) echo fork; return 0 ;; esac
   if [ "$ns" -eq "$nl" ]; then
     # Same length: identical content is a no-op, differing content is a fork.
     if [ "$(md5sum < "$live" | cut -d' ' -f1)" = \

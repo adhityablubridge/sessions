@@ -131,7 +131,9 @@ else
     # Never let a shorter live copy overwrite a stored one that is ahead. Normal
     # pushes have live ahead of store, so this only trips after a --force
     # takeover where this box never pulled the other box's continuation.
-    if [ -f "$STORE/$b.gz" ]; then
+    if [ -f "$STORE/$b.gz" ] && ! gz_ok "$STORE/$b.gz"; then
+      warn "store blob is CORRUPT, replacing from live: $b"
+    elif [ -f "$STORE/$b.gz" ]; then
       case "$(classify_session "$STORE/$b.gz" "$f")" in
         take) warn "store is AHEAD of live, not overwriting: $b (pull first)"
               skipped=$((skipped+1)); refused=$((refused+1)); continue ;;

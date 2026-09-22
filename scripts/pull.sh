@@ -188,6 +188,10 @@ else
   for f in "$STORE"/*.jsonl.gz; do
     [ -e "$f" ] || continue
     b=$(basename "$f" .gz); dst="$TARGET/$b"
+    if ! gz_ok "$f"; then
+      warn "store blob CORRUPT, not restoring: $b (push from a box with a good live copy)"
+      continue
+    fi
     # Writing under a running claude is futile - it rewrites the file from
     # memory seconds later, and that rewrite can DIVERGE rather than merely
     # truncate, turning a clean continuation into a real fork.
