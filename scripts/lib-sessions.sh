@@ -184,6 +184,14 @@ classify_session() {
     # Same length: identical content is a no-op, differing content is a fork.
     if [ "$(md5sum < "$live" | cut -d' ' -f1)" = \
          "$(zcat "$gz" 2>/dev/null | md5sum | cut -d' ' -f1)" ]
+    then echo keep; return 0; fi
+    # Same length but different bytes is almost always the bookkeeping records
+    # (mode / cost-state / last-prompt ...) that each box rewrites locally. Retry
+    # on the conversation-only stream before calling it a fork - without this the
+    # equal-length case reported a fork for two copies whose 14291 conversation
+    # lines were byte-identical.
+    if [ "$(session_conv "$live" | md5sum | cut -d' ' -f1)" = \
+         "$(zcat "$gz" 2>/dev/null | session_conv - | md5sum | cut -d' ' -f1)" ]
     then echo keep; else echo fork; fi
     return 0
   fi
